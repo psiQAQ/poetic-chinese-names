@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import html
 import json
 import random
@@ -170,6 +171,13 @@ def load_excluded_chars(path: Path) -> set[str]:
             if not line or line.startswith("#"):
                 continue
             excluded.update(ch for ch in line if CHINESE_RE.match(ch))
+    return excluded
+
+
+def build_excluded_set(excluded_file: Path, excluded_arg: str) -> set[str]:
+    excluded = load_excluded_chars(excluded_file)
+    if excluded_arg:
+        excluded.update(ch for ch in excluded_arg if CHINESE_RE.match(ch))
     return excluded
 
 
@@ -444,10 +452,69 @@ def generate_from_gushi_namer(
     return list(results.values())[:count]
 
 
-def write_json(path: Path, rows: List[dict]) -> None:
+def timestamped_filename(ts: datetime | None = None) -> str:
+    current = ts or datetime.now()
+    return current.strftime("%Y-%m-%d-%H-%M-%S") + ".json"
+
+
+def resolve_output_path(base_dir: Path, output_dir: str, output_file: str) -> Path:
+    out_dir = base_dir / output_dir
+    filename = output_file.strip() or timestamped_filename()
+    return out_dir / filename
+
+
+def build_output_payload(rows: List[dict], settings: Dict) -> Dict:
+    return {
+        "设置参数": settings,
+        "候选姓名": rows,
+    }
+
+
+def merge_and_sample_rows(
+    get_rows: List[dict], gushi_rows: List[dict], total_count: int, seed: int
+) -> List[dict]:
+    combined_rows = get_rows + gushi_rows
+    random.Random(seed).shuffle(combined_rows)
+    if total_count < 0:
+        return []
+    return combined_rows[:total_count]
+
+
+def evaluate_rows_with_chinesenames(rows: List[dict], base_dir: Path) -> List[dict]:
+    try:
+        from scripts.enrich_generated_names_with_chinesenames import (
+            ChineseNamesEvaluator,
+        )
+    except ModuleNotFoundError:
+        from enrich_generated_names_with_chinesenames import ChineseNamesEvaluator
+
+    repos_dir = resolve_repos_dir(base_dir)
+    family_csv = repos_dir / "ChineseNames" / "data-csv" / "familyname.csv"
+    given_csv = repos_dir / "ChineseNames" / "data-csv" / "givenname.csv"
+    evaluator = ChineseNamesEvaluator(family_csv=family_csv, given_csv=given_csv)
+
+    enriched = []
+    for item in rows:
+        obj = dict(item)
+        full_name = obj.get("full_name", "")
+        obj["chinesenames_eval"] = evaluator.evaluate_full_name(full_name)
+        enriched.append(obj)
+    return enriched
+
+
+def rank_rows(rows: List[dict], top_n: int) -> List[dict]:
+    try:
+        from scripts.rank_and_localize_names import localize_and_rank_records
+    except ModuleNotFoundError:
+        from rank_and_localize_names import localize_and_rank_records
+
+    return localize_and_rank_records(rows, top_n=top_n)
+
+
+def write_json(path: Path, payload: Dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
-        json.dump(rows, f, ensure_ascii=False, indent=2)
+        json.dump(payload, f, ensure_ascii=False, indent=2)
 
 
 def main() -> None:
@@ -473,10 +540,10 @@ def main() -> None:
         choices=[1, 2],
         help="名字字数，支持单字名或双字名，默认2",
     )
-    parser.add_argument("--count", type=int, default=50, help="每个来源生成数量")
+    parser.add_argument("--count", type=int, default=50, help="总生成数量")
     parser.add_argument("--seed", type=int, default=20260226, help="随机种子")
     parser.add_argument(
-        "--excluded", default=DEFAULT_EXCLUDED_WORDS, help="排除字符集合"
+        "--excluded", default="", help="额外排除字符集合（可选，默认不额外追加）"
     )
     parser.add_argument(
         "--excluded-file",
@@ -485,13 +552,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--output-dir",
-        default="outputs/generated_names",
-        help="输出目录（相对 base-dir）",
+        default="outputs",
+        help="输出目录（相对 base-dir），默认 outputs",
     )
     parser.add_argument(
         "--output-file",
-        default="generated_names.json",
-        help="输出 JSON 文件名（相对 output-dir）",
+        default="",
+        help="输出 JSON 文件名；留空时按年月日时分秒自动命名",
     )
     parser.add_argument(
         "--databases",
@@ -508,11 +575,52 @@ def main() -> None:
         action="store_true",
         help="仅列出可用数据库与缩写后退出",
     )
+    eval_group = parser.add_mutually_exclusive_group()
+    eval_group.add_argument(
+        "--enable-chinesenames-eval",
+        dest="enable_chinesenames_eval",
+        action="store_true",
+        help="启用 ChineseNames 评估（默认启用）",
+    )
+    eval_group.add_argument(
+        "--disable-chinesenames-eval",
+        dest="enable_chinesenames_eval",
+        action="store_false",
+        help="关闭 ChineseNames 评估",
+    )
+
+    rank_group = parser.add_mutually_exclusive_group()
+    rank_group.add_argument(
+        "--enable-rank",
+        dest="enable_rank",
+        action="store_true",
+        help="启用按名字独特性排序并中文键名化（默认启用）",
+    )
+    rank_group.add_argument(
+        "--disable-rank",
+        dest="enable_rank",
+        action="store_false",
+        help="关闭排序与中文键名化",
+    )
+    parser.add_argument(
+        "--top-n",
+        type=int,
+        default=100,
+        help="启用排序时保留前 N 个（仅在启用排序时生效）",
+    )
+    parser.set_defaults(enable_chinesenames_eval=True, enable_rank=True)
     args = parser.parse_args()
 
     if args.list_databases:
         print_database_catalog()
         return
+
+    if args.count < 0:
+        parser.error("--count 必须是非负整数")
+    if args.top_n < 0:
+        parser.error("--top-n 必须是非负整数")
+    if not args.enable_chinesenames_eval:
+        args.enable_rank = False
 
     base_dir = Path(args.base_dir)
     surname = args.surname.strip()
@@ -537,8 +645,7 @@ def main() -> None:
         given_length=given_length,
     )
     stroke_map = load_stroke_map(data_dir / "stoke.dat")
-    excluded = load_excluded_chars(excluded_file)
-    excluded.update(set(args.excluded))
+    excluded = build_excluded_set(excluded_file, args.excluded)
 
     get_rows = generate_from_get_chinese_name(
         base_dir=base_dir,
@@ -565,12 +672,43 @@ def main() -> None:
         seed=args.seed + 1,
     )
 
-    out_dir = base_dir / args.output_dir
-    output_path = out_dir / args.output_file
+    output_path = resolve_output_path(
+        base_dir=base_dir,
+        output_dir=args.output_dir,
+        output_file=args.output_file,
+    )
 
-    combined_rows = get_rows + gushi_rows
-    random.Random(args.seed + 2).shuffle(combined_rows)
-    write_json(output_path, combined_rows)
+    combined_rows = merge_and_sample_rows(
+        get_rows=get_rows,
+        gushi_rows=gushi_rows,
+        total_count=args.count,
+        seed=args.seed + 2,
+    )
+    final_rows = combined_rows
+    evaluated_count = 0
+    if args.enable_chinesenames_eval:
+        final_rows = evaluate_rows_with_chinesenames(final_rows, base_dir)
+        evaluated_count = len(final_rows)
+    if args.enable_rank:
+        final_rows = rank_rows(final_rows, args.top_n)
+
+    settings = {
+        "base_dir": str(base_dir),
+        "surname": surname,
+        "gender": gender,
+        "given_length": given_length,
+        "count": args.count,
+        "seed": args.seed,
+        "excluded": args.excluded,
+        "excluded_file": str(excluded_file),
+        "output_dir": args.output_dir,
+        "output_file": output_path.name,
+        "selected_databases": selected_db_list,
+        "enable_chinesenames_eval": args.enable_chinesenames_eval,
+        "enable_rank": args.enable_rank,
+        "top_n": args.top_n,
+    }
+    write_json(output_path, build_output_payload(final_rows, settings))
 
     use_get = any(code in GET_CHINESE_NAME_DATABASES for code in selected_db_set)
     use_gushi = any(code in GUSHI_NAMER_DATABASES for code in selected_db_set)
@@ -578,11 +716,14 @@ def main() -> None:
     print(f"get_chinese_name: {len(get_rows)} 条")
     print(f"gushi_namer: {len(gushi_rows)} 条")
     print(f"已选择数据库: {', '.join(selected_db_list)}")
-    print(f"合并后输出: {len(combined_rows)} 条 -> {output_path}")
-    if (use_get and len(get_rows) < args.count) or (
-        use_gushi and len(gushi_rows) < args.count
-    ):
-        print("警告: 某来源未达到目标数量，可调整 seed 或放宽过滤条件。")
+    print(f"合并后输出: {len(combined_rows)} 条")
+    if args.enable_chinesenames_eval:
+        print(f"已启用 ChineseNames 评估: {evaluated_count} 条")
+    if args.enable_rank:
+        print(f"已启用排序与中文键名化，保留: {len(final_rows)} 条")
+    print(f"输出文件: {output_path}")
+    if len(combined_rows) < args.count and (use_get or use_gushi):
+        print("警告: 总输出未达到目标数量，可调整 seed 或放宽过滤条件。")
 
 
 if __name__ == "__main__":

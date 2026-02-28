@@ -54,9 +54,24 @@ def localize_and_rank_records(records: List[Dict], top_n: int) -> List[Dict]:
 
 def process_file(path: Path, top_n: int) -> None:
     data = json.loads(path.read_text(encoding="utf-8"))
-    output = localize_and_rank_records(data, top_n=top_n)
-    path.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"已处理: {path}，保留 {len(output)} 条")
+
+    if isinstance(data, dict):
+        records = data.get("候选姓名")
+        if not isinstance(records, list):
+            raise ValueError("输入 JSON 缺少 '候选姓名' 列表")
+        ranked = localize_and_rank_records(records, top_n=top_n)
+        output_obj = dict(data)
+        output_obj["候选姓名"] = ranked
+    elif isinstance(data, list):
+        output_obj = localize_and_rank_records(data, top_n=top_n)
+        ranked = output_obj
+    else:
+        raise ValueError("输入 JSON 格式不支持")
+
+    path.write_text(
+        json.dumps(output_obj, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(f"已处理: {path}，保留 {len(ranked)} 条")
 
 
 def main() -> None:

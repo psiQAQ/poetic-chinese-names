@@ -1,7 +1,16 @@
 [project]
-name = "son-name"
+name = "poetic-chinese-names"
 version = "0.1.0"
-description = "Add your description here"
+description = "基于古典语料与 ChineseNames 统计评估的中文起名流水线"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "jieba>=0.42.1",
+    "opencc-python-reimplemented>=0.1.7",
+    "pypinyin>=0.55.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]

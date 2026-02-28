@@ -169,14 +169,30 @@ def enrich_json_file(
     input_json: Path, output_json: Path, evaluator: ChineseNamesEvaluator
 ) -> None:
     data = json.loads(input_json.read_text(encoding="utf-8"))
+    if isinstance(data, dict):
+        records = data.get("候选姓名")
+        if not isinstance(records, list):
+            raise ValueError("输入 JSON 缺少 '候选姓名' 列表")
+    elif isinstance(data, list):
+        records = data
+    else:
+        raise ValueError("输入 JSON 格式不支持")
+
     enriched = []
-    for item in data:
+    for item in records:
         obj = dict(item)
         full_name = obj.get("full_name", "")
         obj["chinesenames_eval"] = evaluator.evaluate_full_name(full_name)
         enriched.append(obj)
+
+    if isinstance(data, dict):
+        output_obj = dict(data)
+        output_obj["候选姓名"] = enriched
+    else:
+        output_obj = enriched
+
     output_json.write_text(
-        json.dumps(enriched, ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps(output_obj, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
 
