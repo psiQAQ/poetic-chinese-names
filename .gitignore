@@ -1,0 +1,19 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.ruff_cache
+.opencode
+.pytest_cache
+.venv
+name-for-child-query.md
+name-repos-analysis.md
+tests
+repo-availability-checks
+outputs
+name-repos/

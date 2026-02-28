@@ -1,0 +1,9 @@
+[submodule "submodules/get_chinese_name"]
+	path = submodules/get_chinese_name
+	url = https://github.com/wrk226/get_chinese_name.git
+[submodule "submodules/gushi_namer"]
+	path = submodules/gushi_namer
+	url = https://github.com/holynova/gushi_namer.git
+[submodule "submodules/ChineseNames"]
+	path = submodules/ChineseNames
+	url = https://github.com/psychbruce/ChineseNames.git
