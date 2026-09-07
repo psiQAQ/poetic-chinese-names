@@ -7,3 +7,15 @@
 [submodule "submodules/ChineseNames"]
 	path = submodules/ChineseNames
 	url = https://github.com/psychbruce/ChineseNames.git
+[submodule "name-repos/ChineseName_Counting"]
+	path = name-repos/ChineseName_Counting
+	url = https://github.com/zlykan/ChineseName_Counting
+[submodule "name-repos/chinese-name-score"]
+	path = name-repos/chinese-name-score
+	url = https://github.com/peiss/chinese-name-score
+[submodule "name-repos/chinesename"]
+	path = name-repos/chinesename
+	url = https://github.com/mouday/chinesename
+[submodule "name-repos/chinesename-gumblex"]
+	path = name-repos/chinesename-gumblex
+	url = https://github.com/gumblex/chinesename
